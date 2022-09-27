@@ -96,14 +96,14 @@ def _alloc_storage(tensor: torch.Tensor, size: torch.Size) -> bool:
         bool: ``True`` if this method allocated storage and ``False`` if the
         storage was already allocated.
     """
-    already_allocated = tensor.storage().size() == size.numel()
+    already_allocated = tensor._typed_storage().size() == size.numel()
     if not already_allocated:
-        tensor_storage_size = tensor.storage().size()
+        tensor_storage_size = tensor._typed_storage().size()
         p_assert(
             tensor_storage_size == 0,
             f"Tensor storage should have been resized to be 0 but got {tensor_storage_size}",
         )
-        tensor.storage().resize_(size.numel())
+        tensor._typed_storage().resize_(size.numel())
     return not already_allocated
 
 
@@ -116,7 +116,7 @@ def _free_storage(tensor: torch.Tensor) -> bool:
         bool: ``True`` if the method freed the storage and ``False`` if the
         storage was already freed.
     """
-    already_freed = tensor.storage().size() == 0
+    already_freed = tensor._typed_storage().size() == 0
     if not already_freed:
         p_assert(
             tensor.storage_offset() == 0,
@@ -125,7 +125,7 @@ def _free_storage(tensor: torch.Tensor) -> bool:
             f"storage size: {tensor.storage().size()}\n"
             f"tensor shape: {tensor.shape}",
         )
-        tensor.storage().resize_(0)
+        tensor._typed_storage().resize_(0)
     return not already_freed
 
 

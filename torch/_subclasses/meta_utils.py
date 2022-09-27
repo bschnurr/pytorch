@@ -98,7 +98,7 @@ class MetaConverter:
         if t.is_sparse:
             weak_st = None
         else:
-            weak_st = StorageWeakRef(t.storage())
+            weak_st = StorageWeakRef(t._typed_storage())
         tensor_ref_key = WeakTensorRefKey(t)
 
         def del_ten():
@@ -134,7 +134,9 @@ class MetaConverter:
         # Use a Weak Ref to s in order to not leak memory
         swr = StorageWeakRef(s)
         if swr not in self.storage_memo:
-            self.storage_memo[swr] = torch.empty(s.size(), dtype=s.dtype, device="meta")
+            self.storage_memo[swr] = torch.empty(
+                s._size(), dtype=s.dtype, device="meta"
+            )
         return self.storage_memo[swr]
 
     # This function assumes that it's possible to do the conversion
@@ -233,7 +235,7 @@ class MetaConverter:
                     # As long as meta storage is not supported, need to prevent
                     # redispatching on set_(Storage, ...) which will choke with
                     # meta storage
-                    s = self.meta_storage(t.storage())
+                    s = self.meta_storage(t._typed_storage())
                     with no_dispatch():
                         sizes, strides = sym_sizes_strides(t)
                         with torch.no_grad():

@@ -205,7 +205,7 @@ class PackageImporter(Importer):
             name = f"{key}.storage"
 
             if storage_context.has_storage(name):
-                storage = storage_context.get_storage(name, dtype).storage()
+                storage = storage_context.get_storage(name, dtype)._typed_storage()
             else:
                 tensor = self.zip_reader.get_storage_from_record(
                     ".data/" + name, size, dtype
@@ -236,7 +236,7 @@ class PackageImporter(Importer):
                 # TODO: Once we decide to break serialization FC, we can
                 # stop wrapping with TypedStorage
                 return torch.storage.TypedStorage(
-                    wrap_storage=storage.untyped(), dtype=dtype
+                    wrap_storage=storage._untyped_storage, dtype=dtype, _internal=True
                 )
             elif typename == "reduce_package":
                 # to fix BC breaking change, objects on this load path
