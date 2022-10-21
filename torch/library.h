@@ -673,6 +673,10 @@ class TORCH_API Library final {
   }
 #endif
 
+  // Helper for getting an OperatorHandle& for a const char*.  You probably
+  // don't need this.
+  c10::OperatorHandle _resolve(const char* name) const;
+
   /// \private
   ///
   /// Convenience overload for directly specifying the dispatch key when
@@ -815,6 +819,8 @@ class TORCH_API Library final {
       CppFunction&& f) &;
   Library& _impl(const char* name, CppFunction&& f) &;
   Library& _fallback(CppFunction&& f) &;
+
+  at::OperatorName _parseNameForLib(const char* name_str) const;
 };
 
 namespace detail {

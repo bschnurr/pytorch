@@ -4,6 +4,7 @@
 #include <ATen/ATen.h>
 #include <ATen/FuncTorchTLS.h>
 #include <ATen/TensorSubclassLikeUtils.h>
+#include <ATen/core/PythonOpRegistrationTrampoline.h>
 #include <ATen/core/dispatch/Dispatcher.h>
 #include <torch/library.h>
 
@@ -71,6 +72,7 @@ class PythonKernelHolder : public c10::OperatorKernel {
       torch::jit::Stack* stack) {
     auto arguments = torch::jit::pop(*stack, op.schema().arguments().size());
     py::gil_scoped_acquire g;
+    c10::impl::EnableHermeticPyObject g2;
     auto args_kwargs = parseIValuesToPyArgsKwargs(op, arguments);
     auto obj = py::reinterpret_steal<py::object>(PyObject_Call(
         func_.ptr(getPyInterpreter()),
@@ -94,6 +96,7 @@ void initDispatchBindings(PyObject* module) {
       .def(
           "def_",
           [](py::object self, const char* schema, const char* alias) {
+            if (!isMainPyInterpreter()) return self;
             self.cast<torch::Library&>().def(
                 torch::schema(schema, parseAliasAnalysisKind(alias)));
             return self;
@@ -107,6 +110,7 @@ void initDispatchBindings(PyObject* module) {
       .def(
           "def_legacy",
           [](py::object self, const char* schema) {
+            if (!isMainPyInterpreter()) return self;
             self.cast<torch::Library&>().def(torch::jit::parseSchema(schema));
             return self;
           },
@@ -126,6 +130,7 @@ void initDispatchBindings(PyObject* module) {
              const char* name,
              const char* dispatch,
              const char* debug) {
+            if (!isMainPyInterpreter()) return self;
             self.cast<torch::Library&>().def(
                 name, dispatch_str(dispatch, [](const at::Tensor& a) {
                         return a;
@@ -143,6 +148,7 @@ void initDispatchBindings(PyObject* module) {
              const char* dispatch,
              const char* alias,
              const char* debug) {
+            if (!isMainPyInterpreter()) return self;
             self.cast<torch::Library&>().def(
                 torch::schema(schema, parseAliasAnalysisKind(alias)),
                 dispatch_str(dispatch, [](const at::Tensor& a) {
@@ -163,6 +169,7 @@ void initDispatchBindings(PyObject* module) {
              const char* name,
              const char* dispatch,
              const char* debug) {
+            if (!isMainPyInterpreter()) return self;
             self.cast<torch::Library&>().impl(
                 name, dispatch_str(dispatch, [](const at::Tensor& a) {
                         return a;
@@ -179,6 +186,7 @@ void initDispatchBindings(PyObject* module) {
              const char* name,
              const char* dispatch,
              const char* debug) {
+            if (!isMainPyInterpreter()) return self;
             self.cast<torch::Library&>().impl(
                 name,
                 dispatch_str(
@@ -198,6 +206,7 @@ void initDispatchBindings(PyObject* module) {
              const char* dispatch,
              py::object func) {
             HANDLE_TH_ERRORS
+            if (!isMainPyInterpreter()) return;
             self.cast<torch::Library&>().impl(
                 name,
                 dispatch_str(
@@ -214,10 +223,11 @@ void initDispatchBindings(PyObject* module) {
       .def(
           "define",
           [](py::object self, const char* schema, const char* alias_analysis) {
-            self.cast<torch::Library&>().def(
-                torch::schema(schema, parseAliasAnalysisKind(alias_analysis)));
-            return torch::schema(schema, parseAliasAnalysisKind(alias_analysis))
-                .name();
+            auto parsed_schema = torch::schema(schema, parseAliasAnalysisKind(alias_analysis));
+            if (!isMainPyInterpreter()) return parsed_schema.name();
+            self.cast<torch::Library&>().def(std::move(parsed_schema));
+            // TODO: this is dumb, had to make a second copy
+            return torch::schema(schema, parseAliasAnalysisKind(alias_analysis)).name();
           },
           "",
           py::arg("schema"),
@@ -225,6 +235,7 @@ void initDispatchBindings(PyObject* module) {
       .def(
           "fallback_fallthrough",
           [](py::object self, const char* dispatch) {
+            if (!isMainPyInterpreter()) return self;
             self.cast<torch::Library&>().fallback(
                 dispatch_str(dispatch, CppFunction::makeFallthrough()));
             return self;
@@ -487,6 +498,10 @@ void initDispatchBindings(PyObject* module) {
         return names;
       },
       py::arg("dispatch_key") = static_cast<const char*>(""));
+
+  m.def(
+      "_dispatch_is_main_interpreter",
+      []() { return isMainPyInterpreter(); });
 
   m.def("_are_functorch_transforms_active", []() {
     auto include_set = c10::impl::tls_local_dispatch_key_set().included_;
