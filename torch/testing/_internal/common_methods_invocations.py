@@ -4713,6 +4713,7 @@ def sample_inputs_std_var(op_info, device, dtype, requires_grad, **kwargs):
     yield SampleInput(tensor_nd(), dim=(1,), correction=S // 2)
     yield SampleInput(tensor_nd(), dim=None, correction=0, keepdim=True)
     yield SampleInput(tensor_nd(), dim=None, correction=None)
+    yield SampleInput(tensor_nd(), correction=0, keepdim=True)
 
     # Test var_mean(Tensor self, bool unbiased=True) -> (Tensor, Tensor)
     yield SampleInput(tensor_nd(), True)
@@ -15894,6 +15895,9 @@ op_db: List[OpInfo] = [
             DecorateInfo(unittest.skip("Skipped!"), 'TestReductions', 'test_ref_duplicate_values'),
             # NumPy is giving NaN for this
             DecorateInfo(unittest.skip("Skipped!"), 'TestReductions', 'test_ref_large_input'),
+            # Out is not supported for all overloads
+            DecorateInfo(unittest.expectedFailure, 'TestCommon', 'test_out'),
+            DecorateInfo(unittest.expectedFailure, 'TestCommon', 'test_out_warning'),
         ),
     ),
     ReductionOpInfo(
@@ -15922,6 +15926,9 @@ op_db: List[OpInfo] = [
             DecorateInfo(unittest.skip("Skipped!"), 'TestReductions', 'test_ref_duplicate_values'),
             # NumPy is giving NaN for this
             DecorateInfo(unittest.skip("Skipped!"), 'TestReductions', 'test_ref_large_input'),
+            # Out is not supported for all overloads
+            DecorateInfo(unittest.expectedFailure, 'TestCommon', 'test_out'),
+            DecorateInfo(unittest.expectedFailure, 'TestCommon', 'test_out_warning'),
         ),
     ),
     ReductionOpInfo(

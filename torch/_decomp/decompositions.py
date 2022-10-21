@@ -1451,7 +1451,7 @@ def xlogy(self: Tensor, other: Tensor) -> Tensor:
 @reduction_complex_to_real
 def var_correction(
     x: Tensor,
-    dim: Optional[List[int]],
+    dim: Optional[List[int]] = None,
     correction: Optional[int] = None,
     keepdim: bool = False,
 ):
@@ -1491,7 +1491,7 @@ def var_correction(
 @reduction_complex_to_real
 def std_decomposition(
     x: Tensor,
-    dim: Optional[List[int]],
+    dim: Optional[List[int]] = None,
     correction: Optional[int] = None,
     keepdim: bool = False,
 ):
