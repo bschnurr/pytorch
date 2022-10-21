@@ -135,10 +135,10 @@ git commit -m "Generate Python docs from pytorch/pytorch@${GITHUB_SHA}" || true
 git status
 
 # push to a temp branch first to trigger CLA check and satisfy branch protections
-git push -u origin pytorchbot/temp-branch-py -f
+git push -u origin HEAD:csl/temp-branch-py -f
 sleep 30
-git push -u origin "${branch}"
-git push origin --delete pytorchbot/temp-branch-py
+git push -u origin HEAD:csl/temp-branch-py-1
+git push origin --delete csl/temp-branch-py
 
 popd
 # =================== The above code **should** be executed inside Docker container ===================
