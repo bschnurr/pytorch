@@ -137,7 +137,7 @@ git status
 # push to a temp branch first to trigger CLA check and satisfy branch protections
 git push -u origin HEAD:csl/temp-branch-py -f
 sleep 30
-git push -u origin HEAD:csl/temp-branch-py-1
+git push -u origin "${branch}"
 git push origin --delete csl/temp-branch-py
 
 popd
