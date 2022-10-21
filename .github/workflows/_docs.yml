@@ -100,6 +100,7 @@ jobs:
           DOCS_TYPE: ${{ matrix.docs_type }}
           RUN_DOXYGEN: ${{ inputs.run-doxygen }}
           BUILD_ENVIRONMENT: ${{ inputs.build-environment }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -ex
           # Convert refs/tags/v1.12.0rc3 into 1.12
@@ -117,6 +118,7 @@ jobs:
             -e DOCS_TYPE \
             -e RUN_DOXYGEN \
             -e WITH_PUSH \
+            -e GITHUB_TOKEN \
             --env-file="/tmp/github_env_${GITHUB_RUN_ID}" \
             --security-opt seccomp=unconfined \
             --cap-add=SYS_PTRACE \
