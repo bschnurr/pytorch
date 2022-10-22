@@ -401,7 +401,7 @@ def _div_rounding_mode(g: jit_utils.GraphContext, self, other, rounding_mode):
     if rounding_mode is None:
         return true_divide(g, self, other)
     elif rounding_mode == "floor":
-        return _floor_divide(g, self, other)
+        return floor_divide(g, self, other)
     elif rounding_mode == "trunc":
         return _trunc_divide(g, self, other)
     else:
@@ -413,13 +413,13 @@ def _div_rounding_mode(g: jit_utils.GraphContext, self, other, rounding_mode):
 
 @_beartype.beartype
 def _trunc_divide(g: jit_utils.GraphContext, self, other):
-    out = g.op("Div", self, other)
+    quotient = g.op("Div", self, other)
     # the correct operation is truncate, which is not supported in ONNX,
     # we cannot call floor since it will behave differently for negative numbers
     # (eg. -0.1 should become -0 )
     # - if scalar_type information are not available, assume that
     # we need to call floor (treat as float)
-    out = g.op("Cast", out, to_i=_C_onnx.TensorProtoDataType.INT64)
+    casted = g.op("Cast", quotient, to_i=_C_onnx.TensorProtoDataType.INT64)
 
     # Matching PyTorch's behavior:
     # - if self is fp the output's type is self's type
@@ -434,48 +434,33 @@ def _trunc_divide(g: jit_utils.GraphContext, self, other):
             and other.type().scalarType() is not None
             and symbolic_helper._is_fp(other)
         ):
-            out = g.op("Cast", out, to_i=_C_onnx.TensorProtoDataType.FLOAT)
-        else:
-            out = g.op(
-                "Cast",
-                out,
-                to_i=_type_utils.JitScalarType.from_name(scalar_type).onnx_type(),
-            )
-    else:
-        out = g.op("Cast", out, to_i=_C_onnx.TensorProtoDataType.FLOAT)
-    return out
+            return g.op("Cast", casted, to_i=_C_onnx.TensorProtoDataType.FLOAT)
 
-
-@_beartype.beartype
-def _floor_divide(g: jit_utils.GraphContext, self, other):
-    if symbolic_helper._is_fp(self) or symbolic_helper._is_fp(other):
-        out = true_divide(g, self, other)
-        return g.op("Floor", out)
-    else:
-        # Integer division does trunction rounding
-        div = g.op("Div", self, other)
-        # Division is negative if: self < 0 != other < 0
-        zero = g.op("Constant", value_t=torch.tensor(0, dtype=torch.int64))
-        negative = g.op(
-            "Xor",
-            symbolic_helper._lt_helper(g, self, zero),
-            symbolic_helper._lt_helper(g, other, zero),
+        return g.op(
+            "Cast",
+            casted,
+            to_i=_type_utils.JitScalarType.from_name(scalar_type).onnx_type(),
         )
-
-        # For negative numbers with self % other != 0, subtract 1 to round down instead of up
-        mod = g.op("Sub", self, g.op("Mul", div, other))
-        fixup_mask = g.op("And", negative, g.op("Not", g.op("Equal", mod, zero)))
-
-        one = g.op("Constant", value_t=torch.tensor(1, dtype=torch.int64))
-        fixup = g.op("Mul", fixup_mask, one)
-        return g.op("Sub", div, fixup)
+    return g.op("Cast", casted, to_i=_C_onnx.TensorProtoDataType.FLOAT)
 
 
 @_onnx_symbolic("aten::floor_divide")
 @_beartype.beartype
 def floor_divide(g: jit_utils.GraphContext, self, other):
-    # Deprecated behavior, floor_divide actually truncates
-    return _trunc_divide(g, self, other)
+    quotient = true_divide(g, self, other)
+    floor = g.op("Floor", quotient)
+    self_type = self.type().scalarType()
+    other_type = other.type().scalarType()
+    if self_type is not None and other_type is not None:
+        self_torch_type = _type_utils.JitScalarType.from_name(self_type).dtype()
+        other_torch_type = _type_utils.JitScalarType.from_name(other_type).dtype()
+        output_torch_type = torch.promote_types(self_torch_type, other_torch_type)
+        return g.op(
+            "Cast",
+            floor,
+            to_i=_type_utils.JitScalarType.from_dtype(output_torch_type).onnx_type(),
+        )
+    return floor
 
 
 @_onnx_symbolic("aten::floordiv")
@@ -498,15 +483,18 @@ def true_divide(g: jit_utils.GraphContext, self, other):
     # Performs div as usual.
     # Implicit casting will be handled in scalar type analysis pass.
     if symbolic_helper._is_fp(self) or symbolic_helper._is_fp(other):
+        # FIXME(justinchuby): Fix the output type when both input are f64.
+        # Currently, the output type is f32.
         return g.op("Div", self, other)
 
     # Case 2: neither is floating
     # Casts both inputs to the default scalar type
     scalar_type = torch.get_default_dtype()
-    onnx_scalar_type = _C_onnx.TensorProtoDataType.FLOAT
     assert scalar_type is torch.float or scalar_type is torch.double
-    if torch.get_default_dtype() is torch.double:
+    if scalar_type is torch.double:
         onnx_scalar_type = _C_onnx.TensorProtoDataType.DOUBLE
+    else:
+        onnx_scalar_type = _C_onnx.TensorProtoDataType.FLOAT
 
     self = g.op("Cast", self, to_i=onnx_scalar_type)
     other = g.op("Cast", other, to_i=onnx_scalar_type)
@@ -5754,7 +5742,7 @@ def meshgrid(g: jit_utils.GraphContext, tensor_list, indexing: Optional[str] = N
 @_onnx_symbolic("aten::remainder")
 @_beartype.beartype
 def remainder(g: jit_utils.GraphContext, input, other):
-    div = _floor_divide(g, input, other)
+    div = floor_divide(g, input, other)
     quo = g.op("Mul", div, other)
     return g.op("Sub", input, quo)
 
