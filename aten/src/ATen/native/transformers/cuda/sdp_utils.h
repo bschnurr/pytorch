@@ -232,8 +232,8 @@ inline bool use_mem_efficient_attention(sdp_params params, bool debug) {
       check_runtime_disabled,
       check_for_attn_weights,
       check_tensor_shapes,
-      check_for_attn_mask,
-      check_for_0_seq_len_nested_tensor};
+      check_for_attn_mask};
+      // check_for_0_seq_len_nested_tensor};
   for (auto& constraint : constraints) {
     if (!constraint(params, debug)) {
       return false;

@@ -95,7 +95,7 @@ Tensor transformer_encoder_layer_forward(
   if (norm_first) {
     x = norm(x, embed_dim, layer_norm_eps, layer_norm_weight_1, layer_norm_bias_1, use_nested_tensor);
   }
-  x = std::get<0>(native_multi_head_attention(
+  x = std::get<0>(at::_native_multi_head_attention(
       x,
       x,
       x,

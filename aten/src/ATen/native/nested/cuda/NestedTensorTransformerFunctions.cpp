@@ -427,7 +427,6 @@ std::tuple<Tensor, Tensor> mem_efficient_helper_nested_unpacked(
       {Nnz_kv, num_heads, head_dim},
       {nnz_v_stride, head_v_stride, head_dim_stride},
       value_impl->get_storage_offsets()[0]);
-
   std::tuple<Tensor, Tensor> attention_and_weights =
       at::_efficient_attention_forward(
           query_buffer_reshaped.unsqueeze(0),

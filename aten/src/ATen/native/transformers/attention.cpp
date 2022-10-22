@@ -6,6 +6,7 @@
 #include <ATen/Parallel.h>
 #include <ATen/TensorIndexing.h>
 #include <ATen/cpu/vec/vec256/vec256.h>
+#include <ATen/native/transformers/attention.h>
 
 #include <ATen/native/transformers/cuda/sdp_utils.h>
 
@@ -107,6 +108,17 @@ void transform_bias_rescale_qkv_inner_loop(
   }
 }
 
+Tensor transform_0213(const Tensor& a) {
+  TORCH_INTERNAL_ASSERT_DEBUG_ONLY(a.size(1));
+  TORCH_INTERNAL_ASSERT_DEBUG_ONLY(a.size(3));
+  return a.permute({0, 2, 1, 3})
+      .contiguous()
+      .view({a.size(0), a.size(2), a.size(1) * a.size(3)});
+}
+
+} // namespace
+
+
 Tensor bmm_nt(const Tensor& a, const Tensor& b) {
   auto a_ = a.view({a.size(0) * a.size(1), a.size(2), a.size(3)});
   auto b_ = b.view({b.size(0) * b.size(1), b.size(2), b.size(3)});
@@ -119,7 +131,7 @@ Tensor masked_softmax(
     Tensor& attn_scores,
     c10::optional<Tensor> attn_mask,
     const Tensor& query,
-    c10::optional<int64_t> mask_type = NULL) {
+    c10::optional<int64_t> mask_type) {
   if (query.is_nested() && !attn_mask) {
     return at::_nested_tensor_softmax_with_shape(attn_scores, query);
   }
@@ -157,13 +169,6 @@ Tensor bmm_nn(Tensor& out, const Tensor& a, const Tensor& b) {
   return c_.view({a.size(0), a.size(1), a.size(2), b.size(3)});
 }
 
-Tensor transform_0213(const Tensor& a) {
-  TORCH_INTERNAL_ASSERT_DEBUG_ONLY(a.size(1));
-  TORCH_INTERNAL_ASSERT_DEBUG_ONLY(a.size(3));
-  return a.permute({0, 2, 1, 3})
-      .contiguous()
-      .view({a.size(0), a.size(2), a.size(1) * a.size(3)});
-}
 
 Tensor transform0213_gemm_nt_bias(
     const Tensor& a,
@@ -255,8 +260,6 @@ Tensor qkv_projection(
   return qkv;
 }
 
-} // namespace
-
 // compute q = (q + q_bias) / sqrt(dim_per_head), k = k + k_bias, v = v + v_bias
 std::tuple<Tensor, Tensor, Tensor> transform_bias_rescale_qkv_cpu(
     const Tensor& qkv,
@@ -313,7 +316,7 @@ std::tuple<Tensor, Tensor, Tensor> transform_bias_rescale_qkv_cpu(
   return std::make_tuple(q_k_v_s[0], q_k_v_s[1], q_k_v_s[2]);
 }
 
-std::tuple<Tensor, Tensor> native_multi_head_attention(
+std::tuple<Tensor, Tensor> native_multi_head_attention_cpu(
     const Tensor& query,
     const Tensor& key,
     const Tensor& value,
@@ -387,34 +390,6 @@ std::tuple<Tensor, Tensor> native_multi_head_attention(
   auto T = query.is_nested() ? 0 : query.sizes()[1];
   const auto dim_per_head = D / num_head;
 #endif
-
-  const int64_t sdp_dim_per_head = D / num_head;
-  if ((query.is_same(key) && key.is_same(value)) && sdp_dim_per_head % 8 == 0 &&
-      query.is_cuda()) {
-    sdp::sdp_params kernel_params{
-        query, key, value, mask.has_value(), 0.0, need_weights, false};
-    auto backend = select_sdp_backend(kernel_params);
-    if (backend != sdp::SDPBackend::math && backend != sdp::SDPBackend::error) {
-      auto x = at::linear(query, qkv_weight, qkv_bias);
-      auto chunks = x.chunk(3, -1);
-      auto x_size_0 = x.size(0);
-
-      chunks[0] = (chunks[0].view({x_size_0, -1, num_head, sdp_dim_per_head}))
-                      .transpose(1, 2);
-      chunks[1] = (chunks[1].view({x_size_0, -1, num_head, sdp_dim_per_head}))
-                      .transpose(1, 2);
-      chunks[2] = (chunks[2].view({x_size_0, -1, num_head, sdp_dim_per_head}))
-                      .transpose(1, 2);
-
-      auto y = at::_scaled_dot_product_attention(
-          chunks[0], chunks[1], chunks[2], mask, 0.0, need_weights, false);
-      auto past_sdp =
-          std::get<0>(y).transpose(1, 2).reshape({x_size_0, -1, embed_dim});
-      return std::make_tuple(
-          at::linear(past_sdp, proj_weight, proj_bias), Tensor());
-    }
-    // Returned math or error lets not use it
-  }
 
   // shape: [B, T, 3 x D]
   auto qkv = qkv_projection(query, key, value, embed_dim, qkv_weight);
