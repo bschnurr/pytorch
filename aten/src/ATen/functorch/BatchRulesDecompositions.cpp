@@ -126,9 +126,10 @@ TORCH_LIBRARY_IMPL(aten, FuncTorchBatched, m) {
   OP_DECOMPOSE2(hsplit, int);
   OP_DECOMPOSE2(hsplit, array);
   OP_DECOMPOSE(hstack);
-  OP_DECOMPOSE(index_select_backward);
+  m.impl("index_select_backward", native::index_select_backward_symint);
   OP_DECOMPOSE(inner);
   OP_DECOMPOSE(inverse);
+  OP_DECOMPOSE(concatenate);
   OP_DECOMPOSE(instance_norm);
   OP_DECOMPOSE(kron);
   OP_DECOMPOSE(l1_loss);
@@ -200,7 +201,7 @@ TORCH_LIBRARY_IMPL(aten, FuncTorchBatched, m) {
   OP_DECOMPOSE(special_multigammaln);
   OP_DECOMPOSE(special_polygamma);
   OP_DECOMPOSE(special_softmax);
-  OP_DECOMPOSE2(split, sizes);
+  m.impl("split.sizes", native::split_symint);
   OP_DECOMPOSE(square);
   OP_DECOMPOSE(numpy_T);
   OP_DECOMPOSE(reshape_as);
@@ -230,7 +231,7 @@ TORCH_LIBRARY_IMPL(aten, FuncTorchBatched, m) {
   OP_DECOMPOSE2(trapezoid, dx);
   OP_DECOMPOSE2(trapz, x);
   OP_DECOMPOSE2(trapz, dx);
-  OP_DECOMPOSE(value_selecting_reduction_backward);
+  m.impl("value_selecting_reduction_backward", native::value_selecting_reduction_backward_symint);
   OP_DECOMPOSE(var);
   OP_DECOMPOSE2(var, dim);
   OP_DECOMPOSE(var_mean);
@@ -256,8 +257,8 @@ TORCH_LIBRARY_IMPL(aten, FuncTorchBatched, m) {
   OP_DECOMPOSE(frobenius_norm);
   OP_DECOMPOSE(type_as);
   OP_DECOMPOSE(linalg_diagonal);
-  OP_DECOMPOSE(pad);
-  OP_DECOMPOSE(_pad_circular);
+  m.impl("pad", native::pad_symint);
+  m.impl("_pad_circular", native::_pad_circular_symint);
   OP_DECOMPOSE(t_);
   OP_DECOMPOSE(swapdims_);
   OP_DECOMPOSE(swapaxes_);
