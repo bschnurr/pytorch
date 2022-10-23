@@ -2,7 +2,13 @@ import dataclasses
 from typing import Iterator, Optional, Tuple
 
 import torch
-from torch._C._profiler import _EventType, _ProfilerEvent, _TensorMetadata, RecordScope
+from torch._C._autograd import _ProfilerResult
+from torch._C._profiler import (
+    _EventType,
+    _ProfilerEvent,
+    _TensorMetadata,
+    RecordScope,
+)
 
 
 @dataclasses.dataclass(eq=True, unsafe_hash=True, frozen=True)
@@ -81,3 +87,8 @@ def extract_gradients(
                 p_grad_key = TensorKey.from_tensor(p_grad)
                 if p_grad_key is not None:
                     yield TensorKey.from_tensor(p), p_grad_key
+
+
+class MemoryProfile:
+    def __init__(self, result: _ProfilerResult) -> None:
+        pass
