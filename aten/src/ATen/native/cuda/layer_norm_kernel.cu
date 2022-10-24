@@ -33,6 +33,7 @@ namespace {
 
 constexpr int kCUDANumThreads = 256;
 constexpr int kColwiseReduceTileSize = 32;
+constexpr int kWarpSize = 32;
 constexpr int vec_size = 4; //we could make it dependent on dtype, but that would lead to different results between float and low-p types
 
 // aligned vector generates vectorized load/store on CUDA (copy-pasted from MemoryAccess.cuh)
@@ -555,9 +556,6 @@ __global__ void GammaBetaBackwardCUDAKernel1(
   }
 }
 
-
-
-
 template <typename T, typename T_ACC>
 __global__ void GammaBetaBackwardCUDAKernel(
     int64_t M,
@@ -569,66 +567,132 @@ __global__ void GammaBetaBackwardCUDAKernel(
     T* dg,
     T* db) {
   alignas(sizeof(double)) extern __shared__ char s_data1[];
-  T_ACC * s_data_typed = reinterpret_cast<T_ACC*>(&s_data1);
+  T_ACC* s_data_typed = reinterpret_cast<T_ACC*>(&s_data1);
+  T_ACC* s_dg;
+  T_ACC* s_db;
+
   const int64_t j = blockIdx.x * blockDim.x + threadIdx.x;
-  constexpr int unroll = 8;
-  T dYs[unroll];
-  T Xs[unroll];
-  T_ACC *  means = s_data_typed;
-  T_ACC * rstds = s_data_typed + unroll * blockDim.y;
+
   T_ACC dg_sum = 0;
   T_ACC db_sum = 0;
-  if (j < N) {
-    int bcounter;
-    for (bcounter = 0; bcounter < M/(blockDim.y * unroll); bcounter++){
-      int offset = (bcounter * blockDim.y + threadIdx.y) * unroll;
-      #pragma unroll
-      for (int ii=0; ii<unroll; ii++){
-        if (threadIdx.x == 0) {
-          means[ii*blockDim.y + threadIdx.y] = mean[offset + ii];
-          rstds[ii*blockDim.y + threadIdx.y] = rstd[offset + ii];
-        }
-        dYs[ii] = dY[(offset + ii) * N + j ];
-        Xs[ii] = X[(offset + ii) * N + j];
 
+  if (j < N) {
+    // Unroll factor should not be larger than blockDim.x;
+    // Currently 8 is the best performance tradeoff.
+    constexpr int unroll_factor = 8;
+
+    T_ACC mean_reg, mean_reg_tmp;
+    T_ACC rstd_reg, rstd_reg_tmp;
+    T dY_reg;
+    T X_reg;
+
+    // Assumes that the blockDim.x is a power of two
+    int shuffle_width = blockDim.x >= kWarpSize ? kWarpSize : blockDim.x;
+    int lanes_doing_load = unroll_factor <= shuffle_width ? unroll_factor : shuffle_width;
+    int laneId = threadIdx.x & 0x1f;
+
+    // Main Loop
+    int bcounter;
+    for (bcounter = 0; bcounter < M / (blockDim.y * unroll_factor); bcounter++){
+      int offset = (bcounter * blockDim.y + threadIdx.y) * unroll_factor;
+
+      // If unroll_factor is larger than the warp size or than blockDim.x
+      // the kernel would produce wrong results. However performance will
+      // be much lower with unroll factors larger than 8
+      if (laneId < lanes_doing_load) {
+        mean_reg_tmp = mean[offset + laneId];
+        rstd_reg_tmp = rstd[offset + laneId];
       }
-      __syncthreads();
+      __syncwarp();
+
       #pragma unroll
-      for (int ii=0; ii<unroll; ii++){
-        dg_sum += dYs[ii] * (Xs[ii] - means[ii*blockDim.y + threadIdx.y]) * rstds[ii * blockDim.y + threadIdx.y];
-        db_sum += dYs[ii];
+      for (int ii = 0; ii < unroll_factor; ++ii) {
+        dY_reg = dY[(offset + ii) * N + j];
+        X_reg = X[(offset + ii) * N + j];
+
+        // Specifying the `width` parameter in the __shfl_sync in order to
+        // cover cases when blockDim.x is less than 32. It should work but
+        // performance is better with (32 x 32) thread blocks.
+        mean_reg = __shfl_sync(0xffffffff, mean_reg_tmp, ii, shuffle_width);
+        rstd_reg = __shfl_sync(0xffffffff, rstd_reg_tmp, ii, shuffle_width);
+
+        dg_sum += dY_reg * (X_reg - mean_reg) * rstd_reg;
+        db_sum += dY_reg;
       }
-      __syncthreads();
     }
-    int offset = (bcounter * blockDim.y + threadIdx.y) * unroll;
-    for (int ii = 0; ii<8; ii++ ){
-      T_ACC mean_val, rstd_val; // we don't use smem in the tail to avoid awkward synchronizations, perf penalty is negligible
+
+    // Remainder loop does not use the same warp exchange strategy but perf
+    // impact is limited, and this would execute only for weird odd shapes.
+    int offset = (bcounter * blockDim.y + threadIdx.y) * unroll_factor;
+    for (int ii = 0; ii < unroll_factor; ii++ ){
       if ((offset + ii) < M) {
-        mean_val = mean[offset+ii];
-        rstd_val = rstd[offset+ii];
-        dYs[0] = dY[(offset + ii) * N + j ];
-        Xs[0] = X[(offset + ii) * N + j];
-        dg_sum += dYs[0] * (Xs[0] - mean_val) * rstd_val;
-        db_sum += dYs[0];
+        mean_reg = mean[offset+ii];
+        rstd_reg = rstd[offset+ii];
+        dY_reg = dY[(offset + ii) * N + j ];
+        X_reg = X[(offset + ii) * N + j];
+        dg_sum += dY_reg * (X_reg - mean_reg) * rstd_reg;
+        db_sum += dY_reg;
       }
     }
-    s_data_typed[threadIdx.y * blockDim.x + threadIdx.x] = dg_sum;
-    s_data_typed[blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x] = db_sum;
-    __syncthreads();
-    for (int offset = blockDim.y/2; offset >=1; offset /= 2){
-      if (threadIdx.y < offset) {
-        s_data_typed[threadIdx.y * blockDim.x + threadIdx.x] += s_data_typed[(threadIdx.y + offset) * blockDim.x + threadIdx.x];
-        s_data_typed[blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x] +=
-        s_data_typed[blockDim.x * blockDim.y + (threadIdx.y + offset) * blockDim.x + threadIdx.x];
-      }
+
+    if ((M % kWarpSize != 0) || (N % kWarpSize != 0) ||
+      (blockDim.x != kWarpSize) || (blockDim.y != kWarpSize)) {
+      // Do the final reduction in shared memory
+      s_dg = s_data_typed;
+      s_db = s_data_typed + blockDim.x * blockDim.y;
+      s_dg[threadIdx.y * blockDim.x + threadIdx.x] = dg_sum;
+      s_db[threadIdx.y * blockDim.x + threadIdx.x] = db_sum;
       __syncthreads();
-    }
-    if (threadIdx.y == 0) {
-      if (dg) {
-        dg[j] = s_data_typed[threadIdx.x];
+
+      for (int offset = blockDim.y / 2; offset >= 1; offset /= 2) {
+        if (threadIdx.y < offset) {
+          s_dg[threadIdx.y * blockDim.x + threadIdx.x] +=
+              s_dg[(threadIdx.y + offset) * blockDim.x + threadIdx.x];
+          s_db[threadIdx.y * blockDim.x + threadIdx.x] +=
+              s_db[(threadIdx.y + offset) * blockDim.x + threadIdx.x];
+        }
+        __syncthreads();
       }
-      if (db) {
-        db[j] = s_data_typed[threadIdx.x + blockDim.x * blockDim.y];
+
+      if (threadIdx.y == 0) {
+        if (dg) {
+          dg[j] = s_dg[threadIdx.x];
+        }
+        if (db) {
+          db[j] = s_db[threadIdx.x];
+        }
+      }
+    } else {
+      // If the block size is (32 x 32) and M; N divide by 32, we can use
+      // warp shuffles for the final reduction step. This removes 4 shmem
+      // loads and stores with their corresponding __syncthreads()
+
+      // This grreatly reduces bank conflicts at the expense of a little
+      // extra shared memory. It does not impact occupancy
+      int padded_bx = (1 + blockDim.x);
+
+      s_dg = s_data_typed;
+      s_db = s_data_typed + (padded_bx * blockDim.y);
+      s_dg[threadIdx.y * padded_bx + threadIdx.x] = dg_sum;
+      s_db[threadIdx.y * padded_bx + threadIdx.x] = db_sum;
+      __syncthreads();
+
+      // Load transposed so that a warp holds an entire column
+      T_ACC reg_dg = s_dg[threadIdx.x * padded_bx + threadIdx.y];
+      T_ACC reg_db = s_db[threadIdx.x * padded_bx + threadIdx.y];
+      for (int delta = 16; delta >= 1; delta /= 2) {
+        reg_dg += __shfl_xor_sync(0xffffffff, reg_dg, delta, kWarpSize);
+        reg_db += __shfl_xor_sync(0xffffffff, reg_db, delta, kWarpSize);
+      }
+
+      if (threadIdx.x == 0) {
+        const int64_t j = blockIdx.x * blockDim.x + threadIdx.y;
+        if (dg) {
+          dg[j] = reg_dg;
+        }
+        if (db) {
+          db[j] = reg_db;
+        }
       }
     }
   }
@@ -778,10 +842,21 @@ void LayerNormBackwardKernelImplInternal(
               dbeta_data);
       C10_CUDA_KERNEL_LAUNCH_CHECK();
     } else {
-      dim3 threads{16, 32};
-      int blocks = (N + threads.x-1)/threads.x;
+      // This implementation uses warp __shfl_sync primitives to exchange data between threads
+      // so pay extra caution to the correctness of the result if changing the thread block size.
+      dim3 threads{kWarpSize, kWarpSize};
+      int blocks = (N + threads.x - 1) / threads.x;
+
+      int shmem_bx = threads.x;
+      if ((M % kWarpSize == 0) && (N % kWarpSize == 0)) {
+        // If M and N divide by 32, we can use warp shuffles for the final reduction. That requires
+        // transposing values in shared memory, so we apply a padding to reduce bank conflicts.
+        shmem_bx++;
+      }
+      size_t shmem_sz = 2 * sizeof(T_ACC) * shmem_bx * threads.y;
+
       GammaBetaBackwardCUDAKernel<T, T_ACC>
-          <<<blocks, threads, 2 * sizeof(T_ACC) * threads.x * threads.y, cuda_stream>>>(
+          <<<blocks, threads, shmem_sz, cuda_stream>>>(
               M,
               N,
               dY_data,
