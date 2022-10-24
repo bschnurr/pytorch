@@ -83,6 +83,7 @@ struct TensorMetadata : public RawTensorMetadataBase {
 
   WeakTensor weak_self_;
   c10::optional<TensorID> id_;
+  c10::optional<AllocationID> allocation_id_;
 };
 
 struct Inputs {
@@ -189,6 +190,7 @@ struct ExtraFields<EventType::Allocation> : RawAllocation {
   }
 
   c10::optional<TensorID> id_;
+  c10::optional<AllocationID> allocation_id_;
 };
 
 template <>

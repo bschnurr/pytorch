@@ -166,6 +166,7 @@ void initPythonBindings(PyObject* module) {
             return reinterpret_cast<intptr_t>(a.ptr_);
           })
       .def_readonly("id", &allocation_t::id_)
+      .def_readonly("allocation_id", &allocation_t::allocation_id_)
       .def_readonly("alloc_size", &allocation_t::alloc_size_)
       .def_readonly("total_allocated", &allocation_t::total_allocated_)
       .def_readonly("total_reserved", &allocation_t::total_reserved_)
