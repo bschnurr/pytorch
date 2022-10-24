@@ -555,10 +555,16 @@ std::tuple<Tensor, Tensor> native_multi_head_attention_cuda(
 
 #endif
   const auto dim_per_head = D / num_head;
-  if ((query.is_same(key) && key.is_same(value)) && dim_per_head % 8 == 0 &&
-      query.is_cuda()) {
-    sdp::sdp_params kernel_params{
-        query, key, value, mask.has_value(), 0.0, need_weights, false};
+  if ((query.is_same(key) && key.is_same(value)) && dim_per_head % 8 == 0 ) {
+
+    // We have not done linear projection yet but the input for SDP
+    // Is expected to be 4 dimensional. We "cheaply" create view tensors
+    // That will then be used for checking hot path conditions with select_sd_backend
+    auto q = query.view({query.size(0), -1, num_head, dim_per_head});
+    auto k = key.view({key.size(0), -1, num_head, dim_per_head});
+    auto v = value.view({value.size(0), -1, num_head, dim_per_head});
+
+    sdp::sdp_params kernel_params{q, k, v, mask.has_value(), 0.0, need_weights, false};
     auto backend = select_sdp_backend(kernel_params);
     if (backend != sdp::SDPBackend::math && backend != sdp::SDPBackend::error) {
       auto x = at::linear(query, qkv_weight, qkv_bias);

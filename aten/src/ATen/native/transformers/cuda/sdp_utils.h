@@ -72,29 +72,16 @@ inline bool check_for_0_seq_len_nested_tensor(sdp_params params, bool debug) {
   const int64_t n_tensors = params.query.size(0);
   const int64_t size_tensor_stride = sizes.stride(0);
 
-  if (params.query.dim() == 4) {
-    // This is being called inside sdp with shape [batch, heads, {seq_len}, dim]
-    for (const auto i : c10::irange(n_tensors)) {
-      // Calculate the cumulative sum of the sequence lengths
-      if (sizes_ptr[(i * size_tensor_stride) + 1] == 0) {
-        TORCH_CHECK(
-            !debug, "Flash Attention does not support 0 sequence length");
-        return false;
-      }
+  // This is being called inside sdp with shape [batch, heads, {seq_len}, dim]
+  for (const auto i : c10::irange(n_tensors)) {
+    // Calculate the cumulative sum of the sequence lengths
+    if (sizes_ptr[(i * size_tensor_stride) + 1] == 0) {
+      TORCH_CHECK(
+          !debug, "Flash Attention does not support 0 sequence length");
+      return false;
     }
   }
-  if (params.query.dim() == 3) {
-    // This is being called inside mha with shape [batch,{seq_len},
-    // num_heads*head_per_dim]
-    for (const auto i : c10::irange(n_tensors)) {
-      // Calculate the cumulative sum of the sequence lengths
-      if (sizes_ptr[(i * size_tensor_stride)] == 0) {
-        TORCH_CHECK(
-            !debug, "Flash Attention does not support 0 sequence length");
-        return false;
-      }
-    }
-  }
+
   return true;
 }
 
@@ -109,7 +96,7 @@ inline bool check_for_attn_mask(sdp_params params, bool debug) {
 inline bool check_tensor_shapes(sdp_params params, bool debug) {
   auto query_dim = params.query.dim();
   if (!(query_dim == params.key.dim() && query_dim == params.value.dim() &&
-        (query_dim == 4 || query_dim == 3))) {
+        (query_dim == 4 ))) {
     TORCH_CHECK(
         !debug,
         "Flash attention requires query, key and value to be 4 dimensional, but got Query dim: ",
