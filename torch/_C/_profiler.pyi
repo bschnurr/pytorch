@@ -135,6 +135,7 @@ class _TensorMetadata:
     def dtype(self) -> dtype: ...
 
 class _ExtraFields_TorchOp:
+    name: str
     inputs: _Inputs
     sequence_number: int
     allow_tf32_cublas: bool
