@@ -132,6 +132,7 @@ void initPythonBindings(PyObject* module) {
       .def_property_readonly("impl_ptr", &TensorMetadata::impl)
       .def_readonly("storage_data_ptr", &TensorMetadata::data_)
       .def_readonly("id", &TensorMetadata::id_)
+      .def_readonly("allocation_id", &TensorMetadata::allocation_id_)
       .def_property_readonly(
           "layout",
           [](const TensorMetadata& metadata) {
@@ -224,6 +225,11 @@ void initPythonBindings(PyObject* module) {
       .def_property_readonly("name", &Result::name)
       .def_property_readonly("tag", &Result::tag)
       .def_readonly("extra_fields", &Result::extra_fields_)
+      .def_property_readonly(
+          "typed",
+          [](const Result& r) {
+            return py::make_tuple(r.tag(), r.extra_fields_);
+          })
       .def_property_readonly(
           "id",
           [](const Result& r) {
